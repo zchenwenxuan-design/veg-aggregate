@@ -122,12 +122,16 @@ def get_supplier_id(f):
     # 调试：打印前几条记录的供应商字段
     if not hasattr(get_supplier_id, "debug_count"):
         get_supplier_id.debug_count = 0
-    if get_supplier_id.debug_count < 5:
-        print(f"    DEBUG 供应商字段: {supplier_raw} (type: {type(supplier_raw)})")
+    if get_supplier_id.debug_count < 3:
+        print(f"    DEBUG 供应商字段: {supplier_raw}")
         get_supplier_id.debug_count += 1
     
     if isinstance(supplier_raw, list) and supplier_raw and isinstance(supplier_raw[0], dict):
-        return supplier_raw[0].get("id", "")
+        first = supplier_raw[0]
+        # 兼容两种格式：
+        # 1. {'id': 'xxx'} - 关联字段格式
+        # 2. {'record_ids': ['xxx'], ...} - 查找引用字段格式
+        return first.get("id") or (first.get("record_ids", [None])[0] if first.get("record_ids") else "") or ""
     
     # 如果是文本，返回文本
     return extract_text(supplier_raw)
