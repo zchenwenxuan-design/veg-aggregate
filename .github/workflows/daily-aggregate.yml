@@ -14,20 +14,15 @@ jobs:
       - name: 检出代码
         uses: actions/checkout@v4
 
-      - name: 安装 Node.js（lark-cli 依赖）
+      - name: 安装 lark-cli
+        id: install_lark
         run: |
           echo "=== 安装 lark-cli ==="
           npm install -g lark-cli
-          # 设置 npm 全局路径到 PATH
           NPM_PATH=$(npm root -g)
           echo "npm global path: $NPM_PATH"
-          echo "$NPM_PATH" >> $GITHUB_PATH
-
-      - name: 验证 lark-cli
-        run: |
-          echo "=== 验证 lark-cli ==="
-          which lark-cli || echo "lark-cli not in PATH"
-          lark-cli --version || echo "lark-cli version failed"
+          # 写入文件供后续步骤使用
+          echo "$NPM_PATH" > /tmp/npm_path.txt
 
       - name: 获取飞书 Access Token
         id: get_token
@@ -51,7 +46,12 @@ jobs:
           echo "LARKSUITE_CLI_USER_ACCESS_TOKEN=$TOKEN" >> $GITHUB_ENV
 
       - name: 运行汇总脚本
+        env:
+          PATH: /usr/local/lib/node_modules:$PATH
         run: |
+          echo "=== 运行汇总脚本 ==="
+          echo "PATH: $PATH"
+          which lark-cli || echo "lark-cli not found"
           python3 vegetable_summary.py
 
       - name: 运行结果
