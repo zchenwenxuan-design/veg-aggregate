@@ -255,7 +255,10 @@ def upsert(table_id, record_id=None, data=None):
     else:
         resp = api_call(url, method="POST", data={"fields": data})
     
-    return resp.get("code") == 0
+    if resp.get("code") != 0:
+        print(f"    API错误: {resp.get('msg', '未知错误')}")
+        return False
+    return True
 
 
 def main():
