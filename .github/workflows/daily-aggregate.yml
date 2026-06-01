@@ -14,6 +14,11 @@ jobs:
       - name: 检出代码
         uses: actions/checkout@v4
 
+      - name: 安装 lark-cli
+        run: |
+          npm install -g @larksuiteoapi/lark-cli
+          lark-cli --version
+
       - name: 获取飞书 Access Token
         id: get_token
         env:
