@@ -23,12 +23,11 @@ jobs:
           # 获取 npm 全局路径
           NPM_PATH=$(npm root -g)
           echo "npm global path: $NPM_PATH"
-          echo "PATH before: $PATH"
-          export PATH="$NPM_PATH:$PATH"
-          echo "PATH after: $PATH"
-          which lark-cli || ls -la "$NPM_PATH/"
+          # 修复权限
+          chmod -R 755 "$NPM_PATH/lark-cli" 2>/dev/null || true
+          ls -la "$NPM_PATH/lark-cli/" 2>/dev/null || echo "Cannot list"
           echo "=== 测试 lark-cli ==="
-          npx lark-cli --version
+          "$NPM_PATH/lark-cli/bin/lark-cli.js" --version 2>/dev/null || "$NPM_PATH/lark-cli/bin/cli.js" --version 2>/dev/null || echo "Direct binary not found"
           echo "NPM_PATH=$NPM_PATH" >> $GITHUB_ENV
 
       - name: 获取飞书 Access Token
@@ -58,11 +57,16 @@ jobs:
         run: |
           echo "=== 运行汇总脚本 ==="
           echo "NPM_PATH: $NPM_PATH"
+          # 设置 PATH
           if [ -n "$NPM_PATH" ]; then
             export PATH="$NPM_PATH:$PATH"
           fi
-          echo "PATH: $PATH"
-          which lark-cli || echo "lark-cli not found"
+          # 查找 lark-cli 并授权
+          LARK_BIN=$(find "$NPM_PATH" -name "lark-cli*" -type f 2>/dev/null | head -1)
+          echo "Found lark-cli: $LARK_BIN"
+          if [ -n "$LARK_BIN" ]; then
+            chmod +x "$LARK_BIN" 2>/dev/null || true
+          fi
           python3 vegetable_summary.py
 
       - name: 运行结果
