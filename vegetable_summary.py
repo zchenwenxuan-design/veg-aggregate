@@ -24,10 +24,8 @@ LARK_TOKEN = os.environ.get("LARKSUITE_CLI_USER_ACCESS_TOKEN", "")
 NPM_GLOBAL_ROOT = os.environ.get("NPM_GLOBAL_ROOT", "")
 LARK_CLI_CMD = "lark-cli"
 if NPM_GLOBAL_ROOT:
-    lark_cli_bin = os.path.join(NPM_GLOBAL_ROOT, "lark-cli", "bin")
-    lark_cli_exe = os.path.join(lark_cli_bin, "lark-cli.js")
+    lark_cli_exe = os.path.join(NPM_GLOBAL_ROOT, "@larksuite", "cli", "scripts", "run.js")
     if os.path.exists(lark_cli_exe):
-        os.environ["PATH"] = lark_cli_bin + os.pathsep + os.environ.get("PATH", "")
         LARK_CLI_CMD = lark_cli_exe
 
 

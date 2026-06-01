@@ -17,15 +17,14 @@ jobs:
       - name: 安装 lark-cli
         id: install_lark
         run: |
-          echo "=== 安装 lark-cli ==="
-          npm install -g lark-cli
+          echo "=== 安装 @larksuite/cli ==="
+          npm install -g @larksuite/cli
           NPM_PATH=$(npm root -g)
           echo "npm global path: $NPM_PATH"
-          ls -la "$NPM_PATH/"
-          ls -la "$NPM_PATH/lark-cli/" 2>/dev/null || echo "lark-cli dir not found"
-          ls -la "$NPM_PATH/lark-cli/bin/" 2>/dev/null || echo "bin dir not found"
-          # 查找 lark-cli 可执行文件
-          find "$NPM_PATH" -name "lark-cli*" 2>/dev/null | head -10
+          ls -la "$NPM_PATH/@larksuite/cli/" 2>/dev/null || echo "@larksuite/cli dir not found"
+          ls -la "$NPM_PATH/@larksuite/cli/scripts/" 2>/dev/null || echo "scripts dir not found"
+          # 验证安装
+          npx lark-cli --version 2>/dev/null || echo "version check failed"
           # 输出给后续步骤使用
           echo "NPM_GLOBAL_ROOT=$NPM_PATH" >> $GITHUB_ENV
 
@@ -55,11 +54,11 @@ jobs:
           echo "=== 运行汇总脚本 ==="
           echo "NPM_GLOBAL_ROOT: $NPM_GLOBAL_ROOT"
           # 确认 lark-cli 存在
-          if [ -n "$NPM_GLOBAL_ROOT" ] && [ -f "$NPM_GLOBAL_ROOT/lark-cli/bin/lark-cli.js" ]; then
-            echo "lark-cli.js 存在: $NPM_GLOBAL_ROOT/lark-cli/bin/lark-cli.js"
-            node "$NPM_GLOBAL_ROOT/lark-cli/bin/lark-cli.js" --version 2>/dev/null || echo "version check failed"
+          if [ -n "$NPM_GLOBAL_ROOT" ] && [ -f "$NPM_GLOBAL_ROOT/@larksuite/cli/scripts/run.js" ]; then
+            echo "run.js 存在: $NPM_GLOBAL_ROOT/@larksuite/cli/scripts/run.js"
+            node "$NPM_GLOBAL_ROOT/@larksuite/cli/scripts/run.js" --version 2>/dev/null || echo "version check failed"
           else
-            echo "警告: lark-cli.js 未找到"
+            echo "警告: run.js 未找到"
           fi
           python3 vegetable_summary.py
 
