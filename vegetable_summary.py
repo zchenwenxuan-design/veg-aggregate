@@ -36,12 +36,23 @@ def run_cli(args, retry=2):
         try:
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
             combined = result.stdout.strip() + "\n" + result.stderr.strip()
+            # 找到第一个完整的 JSON 对象
             s = combined.find('{')
-            e = combined.rfind('}')
-            if s >= 0 and e > s:
-                return json.loads(combined[s:e+1])
+            if s >= 0:
+                depth = 0
+                for i in range(s, len(combined)):
+                    if combined[i] == '{':
+                        depth += 1
+                    elif combined[i] == '}':
+                        depth -= 1
+                    if depth == 0:
+                        return json.loads(combined[s:i+1])
         except Exception as e:
-            print(f"  命令错误: {e}")
+            if attempt == 0:
+                print(f"  命令错误(尝试{attempt+1}): {e}")
+                print(f"  输出: {combined[:200]}")
+            else:
+                print(f"  命令错误: {e}")
         time.sleep(1)
     return {"ok": False}
 
