@@ -17,6 +17,7 @@ jobs:
       - name: 安装 lark-cli
         run: |
           npm install -g lark-cli
+          echo "$(npm bin -g)" >> $GITHUB_PATH
           lark-cli --version
 
       - name: 获取飞书 Access Token
