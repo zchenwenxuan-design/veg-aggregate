@@ -53,13 +53,8 @@ jobs:
         run: |
           echo "=== 运行汇总脚本 ==="
           echo "NPM_GLOBAL_ROOT: $NPM_GLOBAL_ROOT"
-          # 确认 lark-cli 存在
-          if [ -n "$NPM_GLOBAL_ROOT" ] && [ -f "$NPM_GLOBAL_ROOT/@larksuite/cli/scripts/run.js" ]; then
-            echo "run.js 存在: $NPM_GLOBAL_ROOT/@larksuite/cli/scripts/run.js"
-            node "$NPM_GLOBAL_ROOT/@larksuite/cli/scripts/run.js" --version 2>/dev/null || echo "version check failed"
-          else
-            echo "警告: run.js 未找到"
-          fi
+          # 关闭 lark-cli 严格模式（允许 bot 身份调用）
+          npx lark-cli config strict-mode off 2>/dev/null || node "$NPM_GLOBAL_ROOT/@larksuite/cli/scripts/run.js" config strict-mode off 2>/dev/null || true
           python3 vegetable_summary.py
 
       - name: 运行结果
