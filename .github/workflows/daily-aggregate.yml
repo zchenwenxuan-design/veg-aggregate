@@ -17,17 +17,18 @@ jobs:
       - name: 安装 lark-cli
         id: lark_install
         run: |
+          set +e  # 暂时禁用 set -e
           echo "=== 安装 lark-cli ==="
-          npm install -g lark-cli 2>&1 || echo "npm install failed"
+          npm install -g lark-cli 2>&1
           NPM_PATH=$(npm bin -g)
           echo "npm global path: $NPM_PATH"
           echo "PATH before: $PATH"
           export PATH="$NPM_PATH:$PATH"
           echo "PATH after: $PATH"
-          which lark-cli || echo "lark-cli not found in PATH"
-          ls -la "$NPM_PATH/" | head -10 || echo "Cannot list npm path"
+          which lark-cli
+          ls -la "$NPM_PATH/" | head -10
           echo "=== 测试 lark-cli ==="
-          npx lark-cli --version || echo "npx lark-cli failed"
+          npx lark-cli --version
           echo "NPM_PATH=$NPM_PATH" >> $GITHUB_ENV
 
       - name: 获取飞书 Access Token
