@@ -1,83 +1,82 @@
 #!/usr/bin/env python3
 """
-青菜数据每日汇总脚本 v6.4 - 添加调试信息
+青菜数据每日汇总脚本 v7 - 使用 lark-cli 命令
+修复：
+1. 金额用 ROUND(数量×单价, 2) 计算
+2. key使用供应商ID（而非名称），确保一致性
+3. 防重复：同一key只保留一条记录
+4. 使用 lark-cli +record-upsert 命令写入（支持关联字段）
 """
 
 import json
 import time
 import os
+import subprocess
 from collections import defaultdict
 from datetime import datetime
 from decimal import Decimal, ROUND_HALF_UP
-import urllib.request
-import urllib.error
 
 # ========== 配置 ==========
 BASE_TOKEN = os.environ.get("BASE_TOKEN", "CWRUbNJLZa5BmSsuWx1cvcoFnsd")
 HUIZONG_TABLE = "tblqfaH5oJ5pT4kj"
 TAIZHANG_TABLES = ["tbl4aO9rKwKxlXzR"]
-SUPPLIER_TABLE = "tblgGb0oFtei8uAx"
 
 # 从环境变量获取飞书认证信息
 LARK_APP_ID = os.environ.get("LARKSUITE_CLI_APP_ID", "")
 LARK_TOKEN = os.environ.get("LARKSUITE_CLI_USER_ACCESS_TOKEN", "")
 
 
-def api_call(url, method="GET", data=None, retry=2):
-    """调用飞书 API"""
-    headers = {
-        "Authorization": f"Bearer {LARK_TOKEN}",
-        "Content-Type": "application/json"
-    }
-    
+def run_cli(args, retry=2):
+    """运行 lark-cli 命令"""
+    cmd = ["lark-cli"] + args
     for attempt in range(retry):
         try:
-            req = urllib.request.Request(url, headers=headers, method=method)
-            if data:
-                req.data = json.dumps(data).encode('utf-8')
-            
-            with urllib.request.urlopen(req, timeout=120) as response:
-                return json.loads(response.read().decode('utf-8'))
-        except urllib.error.HTTPError as e:
-            error_body = e.read().decode('utf-8')
-            print(f"  API错误: {e.code} - {error_body[:200]}")
-            return {"code": e.code, "msg": error_body}
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+            combined = result.stdout.strip() + "\n" + result.stderr.strip()
+            s = combined.find('{')
+            e = combined.rfind('}')
+            if s >= 0 and e > s:
+                return json.loads(combined[s:e+1])
         except Exception as e:
-            print(f"  请求错误: {e}")
+            print(f"  命令错误: {e}")
         time.sleep(1)
-    return {"code": -1, "msg": "request failed"}
+    return {"ok": False}
 
 
 def read_records(table_id, max_pages=200):
     """分页读取记录"""
     all_records = []
-    page_token = ""
+    offset = 0
     
     for page in range(max_pages):
-        url = f"https://open.feishu.cn/open-apis/bitable/v1/apps/{BASE_TOKEN}/tables/{table_id}/records?page_size=500"
-        if page_token:
-            url += f"&page_token={page_token}"
+        resp = run_cli([
+            "base", "+record-list",
+            "--base-token", BASE_TOKEN,
+            "--table-id", table_id,
+            "--limit", "500",
+            "--offset", str(offset),
+            "--as", "user"
+        ])
         
-        resp = api_call(url)
-        
-        if resp.get("code") != 0:
-            print(f"  读取失败: {resp.get('msg', '未知错误')}")
+        if not resp.get("ok"):
+            print(f"  读取失败: {resp}")
             break
         
         data = resp.get("data", {})
-        items = data.get("items", [])
+        items = data.get("data", [])
+        fields = data.get("fields", [])
+        rids = data.get("record_id_list", [])
         
-        for item in items:
-            all_records.append({
-                "record_id": item.get("record_id", ""),
-                "fields": item.get("fields", {})
-            })
+        for ri, row in enumerate(items):
+            rec = {"record_id": rids[ri] if ri < len(rids) else "", "fields": {}}
+            for ci, val in enumerate(row):
+                fn = fields[ci] if ci < len(fields) else f"c{ci}"
+                rec["fields"][fn] = val
+            all_records.append(rec)
         
         if not data.get("has_more"):
             break
-        page_token = data.get("page_token", "")
-        if not page_token:
-            break
+        offset += len(items)
         time.sleep(0.2)
     
     return all_records
@@ -110,21 +109,12 @@ def extract_text(raw):
         if isinstance(first, dict):
             return first.get("text", "")
         return str(first)
-    if isinstance(raw, dict):
-        return raw.get("text", "")
     return str(raw)
 
 
 def get_supplier_id(f):
-    """获取供应商ID（用于key）"""
+    """获取供应商ID（用于key）- 兼容查找引用字段格式"""
     supplier_raw = f.get("供应商名称", "")
-    
-    # 调试：打印前几条记录的供应商字段
-    if not hasattr(get_supplier_id, "debug_count"):
-        get_supplier_id.debug_count = 0
-    if get_supplier_id.debug_count < 3:
-        print(f"    DEBUG 供应商字段: {supplier_raw}")
-        get_supplier_id.debug_count += 1
     
     if isinstance(supplier_raw, list) and supplier_raw and isinstance(supplier_raw[0], dict):
         first = supplier_raw[0]
@@ -133,7 +123,6 @@ def get_supplier_id(f):
         # 2. {'record_ids': ['xxx'], ...} - 查找引用字段格式
         return first.get("id") or (first.get("record_ids", [None])[0] if first.get("record_ids") else "") or ""
     
-    # 如果是文本，返回文本
     return extract_text(supplier_raw)
 
 
@@ -153,8 +142,6 @@ def aggregate(records):
         supplier_id = get_supplier_id(f)
         if not supplier_id:
             skip_count += 1
-            if skip_count <= 5:
-                print(f"  跳过记录 {rec['record_id']}: 供应商为空, 字段值: {f.get('供应商名称', 'N/A')}")
             continue
         food = extract_text(f.get("统一食材名称", ""))
         ym = extract_text(f.get("年-月", ""))
@@ -188,7 +175,7 @@ def aggregate(records):
         g["ym"] = ym
 
     if skip_count > 0:
-        print(f"  警告: 共跳过 {skip_count} 条供应商为空的记录")
+        print(f"  警告: 跳过 {skip_count} 条供应商为空的记录")
 
     result = []
     for key, g in groups.items():
@@ -245,24 +232,32 @@ def data_changed(old, new):
     return False
 
 
-def upsert(table_id, record_id=None, data=None):
-    """新增或更新"""
-    url = f"https://open.feishu.cn/open-apis/bitable/v1/apps/{BASE_TOKEN}/tables/{table_id}/records"
+def upsert_record(record_id, data):
+    """使用 lark-cli +record-upsert 写入记录"""
+    json_data = json.dumps(data, ensure_ascii=False)
+    
+    args = [
+        "base", "+record-upsert",
+        "--base-token", BASE_TOKEN,
+        "--table-id", HUIZONG_TABLE,
+        "--json", json_data,
+        "--as", "user"
+    ]
     
     if record_id:
-        url = f"{url}/{record_id}"
-        resp = api_call(url, method="PUT", data={"fields": data})
-    else:
-        resp = api_call(url, method="POST", data={"fields": data})
+        args.extend(["--record-id", record_id])
     
-    if resp.get("code") != 0:
-        print(f"    API错误: {resp.get('msg', '未知错误')}")
+    resp = run_cli(args)
+    
+    if not resp.get("ok"):
+        error = resp.get("error", {})
+        print(f"    API错误: {error.get('message', '未知错误')}")
         return False
     return True
 
 
 def main():
-    print(f"===== 青菜汇总v6.4 {time.strftime('%Y-%m-%d %H:%M:%S')} =====")
+    print(f"===== 青菜汇总v7 {time.strftime('%Y-%m-%d %H:%M:%S')} =====")
     print(f"App ID: {LARK_APP_ID[:20]}..." if LARK_APP_ID else "App ID: 未设置")
     print(f"Token: {LARK_TOKEN[:20]}..." if LARK_TOKEN else "Token: 未设置")
 
@@ -311,21 +306,16 @@ def main():
             if not data_changed(ex["data"], new_data):
                 unchanged += 1
                 continue
-            if upsert(HUIZONG_TABLE, record_id=ex["record_id"], data=new_data):
+            if upsert_record(ex["record_id"], new_data):
                 updated += 1
             else:
                 errors += 1
                 print(f"  更新失败: {key[:50]}")
         else:
-            new_data["日期"] = int(item["date_ts"] * 1000) if item["date_ts"] else 0
             new_data["项目名称"] = item["project"]
-            supplier_id = item["supplier_id"]
-            if supplier_id.startswith("recv"):
-                new_data["供应商名称"] = [{"id": supplier_id}]
-            else:
-                new_data["供应商名称"] = supplier_id
+            new_data["供应商名称"] = [{"id": item["supplier_id"]}]
             new_data["统一食材名称"] = item["food"]
-            if upsert(HUIZONG_TABLE, data=new_data):
+            if upsert_record(None, new_data):
                 added += 1
             else:
                 errors += 1
