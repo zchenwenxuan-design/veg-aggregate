@@ -16,7 +16,10 @@ jobs:
 
       - name: 安装 Node.js（lark-cli 依赖）
         run: |
-          npm install -g lark-cli 2>/dev/null || true
+          echo "=== 安装 lark-cli ==="
+          npm install -g lark-cli
+          echo "=== npm 全局路径 ==="
+          npm root -g
 
       - name: 获取飞书 Access Token
         id: get_token
