@@ -6,6 +6,7 @@
 2. key使用供应商ID（而非名称），确保一致性
 3. 防重复：同一key只保留一条记录
 4. 使用 lark-cli +record-upsert 命令写入（支持关联字段）
+5. 脚本内自动安装 lark-cli（解决 GitHub Actions 权限问题）
 """
 
 import json
@@ -25,10 +26,53 @@ TAIZHANG_TABLES = ["tbl4aO9rKwKxlXzR"]
 LARK_APP_ID = os.environ.get("LARKSUITE_CLI_APP_ID", "")
 LARK_TOKEN = os.environ.get("LARKSUITE_CLI_USER_ACCESS_TOKEN", "")
 
+# 全局变量存储 lark-cli 路径
+LARK_CLI_PATH = None
+
+
+def ensure_lark_cli():
+    """确保 lark-cli 已安装"""
+    global LARK_CLI_PATH
+    
+    # 先检查 PATH 中是否有 lark-cli
+    try:
+        result = subprocess.run(["which", "lark-cli"], capture_output=True, text=True, timeout=30)
+        if result.returncode == 0 and result.stdout.strip():
+            LARK_CLI_PATH = result.stdout.strip()
+            return True
+    except:
+        pass
+    
+    # 尝试 npm 全局安装
+    try:
+        subprocess.run(["npm", "install", "-g", "lark-cli"], capture_output=True, text=True, timeout=120)
+    except:
+        pass
+    
+    # 获取 npm 全局路径
+    try:
+        result = subprocess.run(["npm", "root", "-g"], capture_output=True, text=True, timeout=30)
+        npm_path = result.stdout.strip()
+        cli_path = os.path.join(npm_path, "lark-cli", "bin", "lark-cli.js")
+        if os.path.exists(cli_path):
+            LARK_CLI_PATH = cli_path
+            return True
+    except:
+        pass
+    
+    return False
+
 
 def run_cli(args, retry=2):
     """运行 lark-cli 命令"""
-    cmd = ["lark-cli"] + args
+    global LARK_CLI_PATH
+    
+    # 确定命令
+    if LARK_CLI_PATH:
+        cmd = ["node", LARK_CLI_PATH] + args
+    else:
+        cmd = ["lark-cli"] + args
+    
     for attempt in range(retry):
         try:
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
@@ -264,6 +308,13 @@ def main():
     if not LARK_TOKEN:
         print("错误: 未设置 LARKSUITE_CLI_USER_ACCESS_TOKEN")
         return
+
+    # 确保 lark-cli 已安装
+    print("\n[0] 检查 lark-cli...")
+    if not ensure_lark_cli():
+        print("错误: 无法安装或定位 lark-cli")
+        return
+    print(f"  lark-cli 路径: {LARK_CLI_PATH}")
 
     # 1. 读取台账
     print("\n[1] 读取台账...")
