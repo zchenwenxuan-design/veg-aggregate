@@ -313,8 +313,8 @@ def main():
                 print(f"  更新失败: {key[:50]}")
         else:
             new_fields["项目名称"] = item["project"]
-            # 关联字段格式: {"link_record_ids": ["recXXX"]}
-            new_fields["供应商名称"] = {"link_record_ids": [item["supplier_id"]]}
+            # 关联字段格式: 直接传 record_id 字符串数组
+            new_fields["供应商名称"] = [item["supplier_id"]]
             new_fields["统一食材名称"] = item["food"]
             if upsert_record(None, new_fields):
                 added += 1
