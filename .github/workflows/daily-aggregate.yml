@@ -23,8 +23,11 @@ jobs:
           echo "npm global path: $NPM_PATH"
           ls -la "$NPM_PATH/"
           ls -la "$NPM_PATH/lark-cli/" 2>/dev/null || echo "lark-cli dir not found"
+          ls -la "$NPM_PATH/lark-cli/bin/" 2>/dev/null || echo "bin dir not found"
           # 查找 lark-cli 可执行文件
-          find "$NPM_PATH" -name "lark-cli*" -o -name "*.js" 2>/dev/null | head -10
+          find "$NPM_PATH" -name "lark-cli*" 2>/dev/null | head -10
+          # 输出给后续步骤使用
+          echo "NPM_GLOBAL_ROOT=$NPM_PATH" >> $GITHUB_ENV
 
       - name: 获取飞书 Access Token
         id: get_token
@@ -48,17 +51,16 @@ jobs:
           echo "LARKSUITE_CLI_USER_ACCESS_TOKEN=$TOKEN" >> $GITHUB_ENV
 
       - name: 运行汇总脚本
-        env:
-          NPM_PATH: /usr/local/lib/node_modules
-          PATH: /usr/local/lib/node_modules/lark-cli/bin:/usr/local/lib/node_modules/lark-cli/bin/node_modules/.bin:$PATH
         run: |
           echo "=== 运行汇总脚本 ==="
-          echo "NPM_PATH: $NPM_PATH"
-          echo "PATH: $PATH"
-          # 列出目录内容
-          ls -la /usr/local/lib/node_modules/lark-cli/bin/ 2>/dev/null || echo "bin dir not found"
-          # 尝试运行
-          node /usr/local/lib/node_modules/lark-cli/bin/lark-cli.js --version 2>/dev/null || echo "node lark-cli failed"
+          echo "NPM_GLOBAL_ROOT: $NPM_GLOBAL_ROOT"
+          # 确认 lark-cli 存在
+          if [ -n "$NPM_GLOBAL_ROOT" ] && [ -f "$NPM_GLOBAL_ROOT/lark-cli/bin/lark-cli.js" ]; then
+            echo "lark-cli.js 存在: $NPM_GLOBAL_ROOT/lark-cli/bin/lark-cli.js"
+            node "$NPM_GLOBAL_ROOT/lark-cli/bin/lark-cli.js" --version 2>/dev/null || echo "version check failed"
+          else
+            echo "警告: lark-cli.js 未找到"
+          fi
           python3 vegetable_summary.py
 
       - name: 运行结果

@@ -20,10 +20,20 @@ TAIZHANG_TABLES = ["tbl4aO9rKwKxlXzR"]
 LARK_APP_ID = os.environ.get("LARKSUITE_CLI_APP_ID", "")
 LARK_TOKEN = os.environ.get("LARKSUITE_CLI_USER_ACCESS_TOKEN", "")
 
+# GitHub Actions 中 npm 全局路径
+NPM_GLOBAL_ROOT = os.environ.get("NPM_GLOBAL_ROOT", "")
+LARK_CLI_CMD = "lark-cli"
+if NPM_GLOBAL_ROOT:
+    lark_cli_bin = os.path.join(NPM_GLOBAL_ROOT, "lark-cli", "bin")
+    lark_cli_exe = os.path.join(lark_cli_bin, "lark-cli.js")
+    if os.path.exists(lark_cli_exe):
+        os.environ["PATH"] = lark_cli_bin + os.pathsep + os.environ.get("PATH", "")
+        LARK_CLI_CMD = lark_cli_exe
+
 
 def run_cli(args, retry=2):
     """运行 lark-cli 命令"""
-    cmd = ["lark-cli"] + args
+    cmd = [LARK_CLI_CMD] + args
     for attempt in range(retry):
         try:
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
