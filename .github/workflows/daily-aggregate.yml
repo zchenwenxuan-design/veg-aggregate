@@ -1,0 +1,46 @@
+name: 青菜数据每日汇总
+
+on:
+  schedule:
+    # UTC时间0点 = 北京时间8点，每天触发
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+    # 支持手动触发
+
+jobs:
+  aggregate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 获取飞书 Access Token
+        id: get_token
+        env:
+          LARK_APP_ID: ${{ secrets.LARK_APP_ID }}
+          LARK_APP_SECRET: ${{ secrets.LARK_APP_SECRET }}
+        run: |
+          # 通过 App ID + App Secret 获取 tenant_access_token
+          TOKEN=$(curl -s -X POST https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal \
+            -H "Content-Type: application/json" \
+            -d "{\"app_id\":\"$LARK_APP_ID\",\"app_secret\":\"$LARK_APP_SECRET\"}" \
+            | python3 -c "import sys,json; print(json.load(sys.stdin).get('tenant_access_token',''))")
+          
+          if [ -z "$TOKEN" ]; then
+            echo "获取Token失败！"
+            exit 1
+          fi
+          
+          echo "Token获取成功"
+          echo "LARKSUITE_CLI_APP_ID=$LARK_APP_ID" >> $GITHUB_ENV
+          echo "LARKSUITE_CLI_USER_ACCESS_TOKEN=$TOKEN" >> $GITHUB_ENV
+
+      - name: 运行汇总脚本
+        run: |
+          python3 vegetable_summary.py
+
+      - name: 运行结果
+        if: always()
+        run: |
+          echo "===== 运行完成 ====="
+          echo "执行时间: $(TZ='Asia/Shanghai' date '+%Y-%m-%d %H:%M:%S')"
