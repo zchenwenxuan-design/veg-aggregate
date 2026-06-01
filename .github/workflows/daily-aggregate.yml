@@ -14,20 +14,6 @@ jobs:
       - name: 检出代码
         uses: actions/checkout@v4
 
-      - name: 安装 lark-cli
-        id: install_lark
-        run: |
-          echo "=== 安装 @larksuite/cli ==="
-          npm install -g @larksuite/cli
-          NPM_PATH=$(npm root -g)
-          echo "npm global path: $NPM_PATH"
-          ls -la "$NPM_PATH/@larksuite/cli/" 2>/dev/null || echo "@larksuite/cli dir not found"
-          ls -la "$NPM_PATH/@larksuite/cli/scripts/" 2>/dev/null || echo "scripts dir not found"
-          # 验证安装
-          npx lark-cli --version 2>/dev/null || echo "version check failed"
-          # 输出给后续步骤使用
-          echo "NPM_GLOBAL_ROOT=$NPM_PATH" >> $GITHUB_ENV
-
       - name: 获取飞书 Access Token
         id: get_token
         env:
@@ -50,12 +36,7 @@ jobs:
           echo "LARKSUITE_CLI_USER_ACCESS_TOKEN=$TOKEN" >> $GITHUB_ENV
 
       - name: 运行汇总脚本
-        run: |
-          echo "=== 运行汇总脚本 ==="
-          echo "NPM_GLOBAL_ROOT: $NPM_GLOBAL_ROOT"
-          # 关闭 lark-cli 严格模式（允许 bot 身份调用）
-          npx lark-cli config strict-mode off 2>/dev/null || node "$NPM_GLOBAL_ROOT/@larksuite/cli/scripts/run.js" config strict-mode off 2>/dev/null || true
-          python3 vegetable_summary.py
+        run: python3 vegetable_summary.py
 
       - name: 运行结果
         if: always()

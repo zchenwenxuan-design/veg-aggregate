@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """
-青菜数据每日汇总脚本 v9 - 使用 subprocess 调用 lark-cli
+青菜数据每日汇总脚本 v10 - 直接调用飞书 API
 """
 
 import json
 import time
 import os
-import subprocess
+import urllib.request
+import urllib.error
 from collections import defaultdict
 from datetime import datetime
 from decimal import Decimal, ROUND_HALF_UP
@@ -16,94 +17,100 @@ BASE_TOKEN = os.environ.get("BASE_TOKEN", "CWRUbNJLZa5BmSsuWx1cvcoFnsd")
 HUIZONG_TABLE = "tblqfaH5oJ5pT4kj"
 TAIZHANG_TABLES = ["tbl4aO9rKwKxlXzR"]
 
-# 从环境变量获取飞书认证信息
+# 飞书 API
 LARK_APP_ID = os.environ.get("LARKSUITE_CLI_APP_ID", "")
 LARK_TOKEN = os.environ.get("LARKSUITE_CLI_USER_ACCESS_TOKEN", "")
-
-# GitHub Actions 中 npm 全局路径
-NPM_GLOBAL_ROOT = os.environ.get("NPM_GLOBAL_ROOT", "")
-LARK_CLI_CMD = "lark-cli"
-if NPM_GLOBAL_ROOT:
-    lark_cli_exe = os.path.join(NPM_GLOBAL_ROOT, "@larksuite", "cli", "scripts", "run.js")
-    if os.path.exists(lark_cli_exe):
-        LARK_CLI_CMD = lark_cli_exe
+API_BASE = "https://open.feishu.cn/open-apis"
 
 
-def run_cli(args, retry=2):
-    """运行 lark-cli 命令"""
-    cmd = [LARK_CLI_CMD] + args
-    for attempt in range(retry):
+def api_request(method, path, data=None, params=None):
+    """调用飞书 API"""
+    url = f"{API_BASE}{path}"
+    if params:
+        qs = "&".join(f"{k}={v}" for k, v in params.items())
+        url += f"?{qs}"
+    
+    headers = {
+        "Authorization": f"Bearer {LARK_TOKEN}",
+        "Content-Type": "application/json; charset=utf-8"
+    }
+    
+    body = json.dumps(data).encode("utf-8") if data else None
+    req = urllib.request.Request(url, data=body, headers=headers, method=method)
+    
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        error_body = e.read().decode("utf-8")
         try:
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
-            combined = result.stdout.strip() + "\n" + result.stderr.strip()
-            # 找到包含 "ok" 的 JSON 对象
-            start = 0
-            while True:
-                s = combined.find('{', start)
-                if s < 0:
-                    break
-                depth = 0
-                for i in range(s, len(combined)):
-                    if combined[i] == '{':
-                        depth += 1
-                    elif combined[i] == '}':
-                        depth -= 1
-                    if depth == 0:
-                        try:
-                            obj = json.loads(combined[s:i+1])
-                            if 'ok' in obj:
-                                return obj
-                        except:
-                            pass
-                        start = i + 1
-                        break
-        except Exception as e:
-            if attempt == 0:
-                print(f"  命令错误(尝试{attempt+1}): {e}")
-                print(f"  输出前200字: {combined[:200]}")
-            else:
-                print(f"  命令错误: {e}")
-        time.sleep(1)
-    return {"ok": False}
+            return json.loads(error_body)
+        except:
+            return {"code": e.code, "msg": error_body}
+    except Exception as e:
+        return {"code": -1, "msg": str(e)}
 
 
-def read_records(table_id, max_pages=200):
+def list_records(table_id, page_size=500, max_pages=200):
     """分页读取记录"""
     all_records = []
-    offset = 0
+    page_token = None
     
     for page in range(max_pages):
-        resp = run_cli([
-            "base", "+record-list",
-            "--base-token", BASE_TOKEN,
-            "--table-id", table_id,
-            "--limit", "500",
-            "--offset", str(offset),
-            "--as", "bot"
-        ])
+        params = {
+            "page_size": page_size
+        }
+        if page_token:
+            params["page_token"] = page_token
         
-        if not resp.get("ok"):
-            print(f"  读取失败: {resp}")
+        resp = api_request("GET", f"/bitable/v1/apps/{BASE_TOKEN}/tables/{table_id}/records", params=params)
+        
+        if resp.get("code") != 0:
+            print(f"  读取失败: code={resp.get('code')}, msg={resp.get('msg', '')[:100]}")
             break
         
         data = resp.get("data", {})
-        items = data.get("data", [])
-        fields = data.get("fields", [])
-        rids = data.get("record_id_list", [])
+        items = data.get("items", [])
         
-        for ri, row in enumerate(items):
-            rec = {"record_id": rids[ri] if ri < len(rids) else "", "fields": {}}
-            for ci, val in enumerate(row):
-                fn = fields[ci] if ci < len(fields) else f"c{ci}"
-                rec["fields"][fn] = val
-            all_records.append(rec)
+        for item in items:
+            all_records.append({
+                "record_id": item.get("record_id", ""),
+                "fields": item.get("fields", {})
+            })
         
-        if not data.get("has_more"):
+        page_token = data.get("page_token")
+        if not page_token or not data.get("has_more"):
             break
-        offset += len(items)
-        time.sleep(0.2)
+        time.sleep(0.15)
     
     return all_records
+
+
+def list_fields(table_id):
+    """获取字段列表"""
+    resp = api_request("GET", f"/bitable/v1/apps/{BASE_TOKEN}/tables/{table_id}/fields")
+    if resp.get("code") != 0:
+        return []
+    return resp.get("data", {}).get("items", [])
+
+
+def upsert_record(record_id, fields):
+    """创建或更新记录"""
+    if record_id:
+        # 更新
+        resp = api_request("PUT", f"/bitable/v1/apps/{BASE_TOKEN}/tables/{HUIZONG_TABLE}/records/{record_id}", {
+            "fields": fields
+        })
+    else:
+        # 新建
+        resp = api_request("POST", f"/bitable/v1/apps/{BASE_TOKEN}/tables/{HUIZONG_TABLE}/records", {
+            "fields": fields
+        })
+    
+    if resp.get("code") != 0:
+        print(f"    API错误: code={resp.get('code')}, msg={resp.get('msg', '')[:100]}")
+        return False
+    return True
 
 
 def safe_float(val, default=0.0):
@@ -253,50 +260,16 @@ def data_changed(old, new):
     return False
 
 
-def upsert_record(record_id, data):
-    """使用 lark-cli +record-upsert 写入记录"""
-    json_data = json.dumps(data, ensure_ascii=False)
-    
-    args = [
-        "base", "+record-upsert",
-        "--base-token", BASE_TOKEN,
-        "--table-id", HUIZONG_TABLE,
-        "--json", json_data,
-        "--as", "bot"
-    ]
-    
-    if record_id:
-        args.extend(["--record-id", record_id])
-    
-    resp = run_cli(args)
-    
-    if not resp.get("ok"):
-        error = resp.get("error", {})
-        print(f"    API错误: {error.get('message', '未知错误')}")
-        return False
-    return True
-
-
 def main():
-    print(f"===== 青菜汇总v9 {time.strftime('%Y-%m-%d %H:%M:%S')} =====")
+    print(f"===== 青菜汇总v10 {time.strftime('%Y-%m-%d %H:%M:%S')} =====")
     print(f"App ID: {LARK_APP_ID[:20]}..." if LARK_APP_ID else "App ID: 未设置")
     print(f"Token: {LARK_TOKEN[:20]}..." if LARK_TOKEN else "Token: 未设置")
-
-    # 检查 lark-cli 是否可用
-    try:
-        result = subprocess.run(["which", "lark-cli"], capture_output=True, text=True)
-        if result.returncode == 0:
-            print(f"  lark-cli: {result.stdout.strip()}")
-        else:
-            print("  警告: lark-cli 未在 PATH 中")
-    except:
-        print("  警告: 无法检查 lark-cli")
 
     # 1. 读取台账
     print("\n[1] 读取台账...")
     all_records = []
     for i, tid in enumerate(TAIZHANG_TABLES):
-        recs = read_records(tid)
+        recs = list_records(tid)
         print(f"  表{i+1}: {len(recs)} 条")
         all_records.extend(recs)
     print(f"  总计: {len(all_records)} 条")
@@ -311,7 +284,7 @@ def main():
 
     # 3. 读取汇总表
     print("\n[3] 读取汇总表...")
-    hz_records = read_records(HUIZONG_TABLE)
+    hz_records = list_records(HUIZONG_TABLE)
     existing = build_existing(hz_records)
     print(f"  现有: {len(existing)} 条")
 
@@ -321,7 +294,7 @@ def main():
 
     for item in agg:
         key = item["key"]
-        new_data = {
+        new_fields = {
             "数量汇总": item["qty"],
             "金额汇总": item["amt"],
             "月均单价": item["avg"],
@@ -330,24 +303,24 @@ def main():
         }
         if key in existing:
             ex = existing[key]
-            if not data_changed(ex["data"], new_data):
+            if not data_changed(ex["data"], new_fields):
                 unchanged += 1
                 continue
-            if upsert_record(ex["record_id"], new_data):
+            if upsert_record(ex["record_id"], new_fields):
                 updated += 1
             else:
                 errors += 1
                 print(f"  更新失败: {key[:50]}")
         else:
-            new_data["项目名称"] = item["project"]
-            new_data["供应商名称"] = [{"id": item["supplier_id"]}]
-            new_data["统一食材名称"] = item["food"]
-            if upsert_record(None, new_data):
+            new_fields["项目名称"] = item["project"]
+            new_fields["供应商名称"] = [{"id": item["supplier_id"]}]
+            new_fields["统一食材名称"] = item["food"]
+            if upsert_record(None, new_fields):
                 added += 1
             else:
                 errors += 1
                 print(f"  新增失败: {key[:50]}")
-        time.sleep(0.3)
+        time.sleep(0.2)
 
     print(f"\n===== 完成 =====")
     print(f"新增:{added} 更新:{updated} 未变:{unchanged} 失败:{errors}")
