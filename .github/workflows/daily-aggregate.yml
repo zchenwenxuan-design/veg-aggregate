@@ -16,7 +16,7 @@ jobs:
 
       - name: 安装 lark-cli
         run: |
-          npm install -g @larksuiteoapi/lark-cli
+          npm install -g lark-cli
           lark-cli --version
 
       - name: 获取飞书 Access Token
