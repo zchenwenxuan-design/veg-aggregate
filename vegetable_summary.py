@@ -251,7 +251,11 @@ def upsert_record(table_id, record_id=None, data=None):
         resp = api_call(url, method="POST", data={"fields": data})
     
     if resp.get("code") != 0:
-        print(f"    API错误: {resp.get('msg', '未知错误')}")
+        error_msg = resp.get('msg', '未知错误')
+        print(f"    API错误: {error_msg}")
+        # 打印更多调试信息
+        if "LinkFieldConvFail" in error_msg:
+            print(f"    调试: 关联字段转换失败，data={json.dumps(data, ensure_ascii=False)[:200]}")
         return False
     return True
 
@@ -313,11 +317,11 @@ def main():
                 print(f"  更新失败: {key[:50]}")
         else:
             new_data["项目名称"] = item["project"]
-            # 供应商名称是关联字段，使用 record_ids 格式
+            # 供应商名称是关联字段，使用正确的 id 格式
             supplier_id = item["supplier_id"]
             if supplier_id.startswith("recv"):
-                # 使用 record_ids 格式（查找引用字段）
-                new_data["供应商名称"] = [{"record_ids": [supplier_id]}]
+                # 使用关联字段格式
+                new_data["供应商名称"] = [{"id": supplier_id}]
             else:
                 new_data["供应商名称"] = supplier_id
             new_data["统一食材名称"] = item["food"]
