@@ -36,9 +36,12 @@ def run_cli(args, retry=2):
         try:
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
             combined = result.stdout.strip() + "\n" + result.stderr.strip()
-            # 找到第一个完整的 JSON 对象
-            s = combined.find('{')
-            if s >= 0:
+            # 找到包含 "ok" 的 JSON 对象
+            start = 0
+            while True:
+                s = combined.find('{', start)
+                if s < 0:
+                    break
                 depth = 0
                 for i in range(s, len(combined)):
                     if combined[i] == '{':
@@ -46,11 +49,18 @@ def run_cli(args, retry=2):
                     elif combined[i] == '}':
                         depth -= 1
                     if depth == 0:
-                        return json.loads(combined[s:i+1])
+                        try:
+                            obj = json.loads(combined[s:i+1])
+                            if 'ok' in obj:
+                                return obj
+                        except:
+                            pass
+                        start = i + 1
+                        break
         except Exception as e:
             if attempt == 0:
                 print(f"  命令错误(尝试{attempt+1}): {e}")
-                print(f"  输出: {combined[:200]}")
+                print(f"  输出前200字: {combined[:200]}")
             else:
                 print(f"  命令错误: {e}")
         time.sleep(1)
