@@ -79,7 +79,7 @@ def read_records(table_id, max_pages=200):
             "--table-id", table_id,
             "--limit", "500",
             "--offset", str(offset),
-            "--as", "user"
+            "--as", "bot"
         ])
         
         if not resp.get("ok"):
@@ -262,7 +262,7 @@ def upsert_record(record_id, data):
         "--base-token", BASE_TOKEN,
         "--table-id", HUIZONG_TABLE,
         "--json", json_data,
-        "--as", "user"
+        "--as", "bot"
     ]
     
     if record_id:
