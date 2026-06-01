@@ -14,13 +14,6 @@ jobs:
       - name: 检出代码
         uses: actions/checkout@v4
 
-      - name: 安装 Node.js（lark-cli 依赖）
-        run: |
-          echo "=== 安装 lark-cli ==="
-          npm install -g lark-cli
-          echo "=== npm 全局路径 ==="
-          npm root -g
-
       - name: 获取飞书 Access Token
         id: get_token
         env:
