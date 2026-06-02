@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-青菜数据每日汇总脚本 v11 - 先清空再写入，确保不重复
+青菜数据每日汇总脚本 v12 - 正确处理选项字段
 """
 
 import json
@@ -15,12 +15,15 @@ from decimal import Decimal, ROUND_HALF_UP
 # ========== 配置 ==========
 BASE_TOKEN = os.environ.get("BASE_TOKEN", "CWRUbNJLZa5BmSsuWx1cvcoFnsd")
 HUIZONG_TABLE = "tblqfaH5oJ5pT4kj"
-TAIZHONG_TABLES = ["tbl4aO9rKwKxlXzR"]
+TAIZHANG_TABLES = ["tbl4aO9rKwKxlXzR"]
 
 # 飞书 API
 LARK_APP_ID = os.environ.get("LARKSUITE_CLI_APP_ID", "")
 LARK_TOKEN = os.environ.get("LARKSUITE_CLI_USER_ACCESS_TOKEN", "")
 API_BASE = "https://open.feishu.cn/open-apis"
+
+# 选项ID -> 名称映射
+OPTION_MAP = {}
 
 
 def api_request(method, path, data=None, params=None):
@@ -49,6 +52,28 @@ def api_request(method, path, data=None, params=None):
             return {"code": e.code, "msg": error_body}
     except Exception as e:
         return {"code": -1, "msg": str(e)}
+
+
+def load_field_options(table_id):
+    """加载字段选项映射"""
+    global OPTION_MAP
+    resp = api_request("GET", f"/bitable/v1/apps/{BASE_TOKEN}/tables/{table_id}/fields")
+    
+    if resp.get("code") != 0:
+        print(f"  获取字段失败: {resp.get('msg', '')[:100]}")
+        return
+    
+    for f in resp.get("data", {}).get("items", []):
+        ftype = f.get("type", "")
+        if ftype in [3, 4]:  # 单选或多选
+            options = f.get("property", {}).get("options", [])
+            for opt in options:
+                opt_id = opt.get("id", "")
+                opt_name = opt.get("name", "")
+                if opt_id and opt_name:
+                    OPTION_MAP[opt_id] = opt_name
+    
+    print(f"  加载选项映射: {len(OPTION_MAP)} 个")
 
 
 def delete_record(record_id):
@@ -100,8 +125,6 @@ def clear_all_records():
     for rec in records:
         if delete_record(rec["record_id"]):
             deleted += 1
-        else:
-            print(f"  删除失败: {rec['record_id']}")
         time.sleep(0.05)
     
     print(f"  已删除 {deleted}/{len(records)} 条记录")
@@ -129,6 +152,11 @@ def safe_float(val, default=0.0):
     """安全转浮点"""
     if val is None or val == "" or val == []:
         return default
+    if isinstance(val, str):
+        try:
+            return float(val)
+        except:
+            return default
     try:
         return float(val)
     except (ValueError, TypeError):
@@ -151,12 +179,34 @@ def extract_text(raw):
             return str(first[0]) if first else ""
         if isinstance(first, dict):
             return first.get("text", "")
+        # 可能是选项ID字符串
+        if isinstance(first, str):
+            # 查找选项名称
+            return OPTION_MAP.get(first, first)
         return str(first)
     return str(raw)
 
 
+def get_option_name(raw):
+    """获取选项名称 - 处理选项ID"""
+    if raw is None:
+        return ""
+    if isinstance(raw, str):
+        # 可能是选项ID
+        return OPTION_MAP.get(raw, raw)
+    if isinstance(raw, list):
+        if not raw:
+            return ""
+        first = raw[0]
+        if isinstance(first, str):
+            return OPTION_MAP.get(first, first)
+        if isinstance(first, dict):
+            return first.get("text", "")
+    return str(raw)
+
+
 def get_supplier_id(f):
-    """获取供应商ID（用于key）- 兼容查找引用字段格式"""
+    """获取供应商ID（用于key）"""
     supplier_raw = f.get("供应商名称", "")
     
     if isinstance(supplier_raw, list) and supplier_raw and isinstance(supplier_raw[0], dict):
@@ -178,12 +228,18 @@ def aggregate(records):
     for rec in records:
         f = rec["fields"]
 
-        project = extract_text(f.get("项目名称", ""))
+        # 项目名称 - 处理选项ID
+        project = get_option_name(f.get("项目名称", ""))
+        
         supplier_id = get_supplier_id(f)
         if not supplier_id:
             skip_count += 1
             continue
-        food = extract_text(f.get("统一食材名称", ""))
+        
+        # 统一食材名称 - 处理选项ID
+        food = get_option_name(f.get("统一食材名称", ""))
+        
+        # 年-月
         ym = extract_text(f.get("年-月", ""))
 
         qty = safe_float(f.get("数量", 0))
@@ -192,12 +248,11 @@ def aggregate(records):
         amt = Decimal(str(qty)) * Decimal(str(price))
         amt = amt.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
 
-        # 获取日期 - 优先使用日期字段，否则用当前时间
+        # 获取日期
         date_raw = f.get("日期", "")
         date_ts = 0
         if date_raw:
             if isinstance(date_raw, str):
-                # 尝试解析日期字符串
                 try:
                     if len(date_raw) >= 10:
                         dt = datetime.strptime(date_raw[:10], "%Y-%m-%d")
@@ -205,10 +260,8 @@ def aggregate(records):
                 except:
                     pass
             elif isinstance(date_raw, (int, float)):
-                # 已经是时间戳（毫秒）
                 date_ts = date_raw / 1000 if date_raw > 1000000000000 else date_raw
         
-        # 如果没有日期，使用当前时间
         if date_ts == 0:
             date_ts = time.time()
 
@@ -216,7 +269,6 @@ def aggregate(records):
         g = groups[key]
         g["qty"] += qty
         g["amt"] += amt
-        # 保留最新的日期
         if date_ts > g["date_ts"]:
             g["date_ts"] = date_ts
         if price > 0:
@@ -249,13 +301,17 @@ def aggregate(records):
 
 
 def main():
-    print(f"===== 青菜汇总v11 {time.strftime('%Y-%m-%d %H:%M:%S')} =====")
-    print(f"App ID: {LARK_APP_ID[:20]}..." if LARK_APP_ID else "App ID: 未设置")
+    print(f"===== 青菜汇总v12 {time.strftime('%Y-%m-%d %H:%M:%S')} =====")
+
+    # 0. 加载选项映射
+    print("\n[0] 加载字段选项映射...")
+    for tid in TAIZHANG_TABLES:
+        load_field_options(tid)
 
     # 1. 读取台账
     print("\n[1] 读取台账...")
     all_records = []
-    for i, tid in enumerate(TAIZHONG_TABLES):
+    for i, tid in enumerate(TAIZHANG_TABLES):
         recs = list_records(tid)
         print(f"  表{i+1}: {len(recs)} 条")
         all_records.extend(recs)
@@ -268,6 +324,11 @@ def main():
     print("\n[2] 聚合...")
     agg = aggregate(all_records)
     print(f"  维度数: {len(agg)}")
+    
+    # 打印几个示例
+    print("  示例数据:")
+    for item in agg[:3]:
+        print(f"    {item['ym']} | {item['project']} | {item['food']} | 数量:{item['qty']} | 金额:{item['amt']}")
 
     # 3. 清空汇总表
     print("\n[3] 清空汇总表...")
@@ -278,7 +339,6 @@ def main():
     added = errors = 0
 
     for item in agg:
-        # 飞书 API 日期字段需要毫秒时间戳
         date_ms = int(item["date_ts"] * 1000)
         
         new_fields = {
@@ -298,7 +358,6 @@ def main():
             added += 1
         else:
             errors += 1
-            print(f"  新增失败: {item['key'][:50]}")
         time.sleep(0.15)
 
     print(f"\n===== 完成 =====")
