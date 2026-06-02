@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-青菜数据每日汇总脚本 v10 - 直接调用飞书 API
+青菜数据每日汇总脚本 v11 - 先清空再写入，确保不重复
 """
 
 import json
@@ -15,7 +15,7 @@ from decimal import Decimal, ROUND_HALF_UP
 # ========== 配置 ==========
 BASE_TOKEN = os.environ.get("BASE_TOKEN", "CWRUbNJLZa5BmSsuWx1cvcoFnsd")
 HUIZONG_TABLE = "tblqfaH5oJ5pT4kj"
-TAIZHANG_TABLES = ["tbl4aO9rKwKxlXzR"]
+TAIZHONG_TABLES = ["tbl4aO9rKwKxlXzR"]
 
 # 飞书 API
 LARK_APP_ID = os.environ.get("LARKSUITE_CLI_APP_ID", "")
@@ -35,7 +35,7 @@ def api_request(method, path, data=None, params=None):
         "Content-Type": "application/json; charset=utf-8"
     }
     
-    body = json.dumps(data).encode("utf-8") if data else None
+    body = json.dumps(data, ensure_ascii=False).encode("utf-8") if data else None
     req = urllib.request.Request(url, data=body, headers=headers, method=method)
     
     try:
@@ -51,15 +51,19 @@ def api_request(method, path, data=None, params=None):
         return {"code": -1, "msg": str(e)}
 
 
+def delete_record(record_id):
+    """删除记录"""
+    resp = api_request("DELETE", f"/bitable/v1/apps/{BASE_TOKEN}/tables/{HUIZONG_TABLE}/records/{record_id}")
+    return resp.get("code") == 0
+
+
 def list_records(table_id, page_size=500, max_pages=200):
     """分页读取记录"""
     all_records = []
     page_token = None
     
     for page in range(max_pages):
-        params = {
-            "page_size": page_size
-        }
+        params = {"page_size": page_size}
         if page_token:
             params["page_token"] = page_token
         
@@ -81,28 +85,36 @@ def list_records(table_id, page_size=500, max_pages=200):
         page_token = data.get("page_token")
         if not page_token or not data.get("has_more"):
             break
-        time.sleep(0.15)
+        time.sleep(0.1)
     
     return all_records
 
 
-def list_fields(table_id):
-    """获取字段列表"""
-    resp = api_request("GET", f"/bitable/v1/apps/{BASE_TOKEN}/tables/{table_id}/fields")
-    if resp.get("code") != 0:
-        return []
-    return resp.get("data", {}).get("items", [])
+def clear_all_records():
+    """清空汇总表所有记录"""
+    print("  读取现有记录...")
+    records = list_records(HUIZONG_TABLE)
+    print(f"  找到 {len(records)} 条记录，开始删除...")
+    
+    deleted = 0
+    for rec in records:
+        if delete_record(rec["record_id"]):
+            deleted += 1
+        else:
+            print(f"  删除失败: {rec['record_id']}")
+        time.sleep(0.05)
+    
+    print(f"  已删除 {deleted}/{len(records)} 条记录")
+    return deleted
 
 
 def upsert_record(record_id, fields):
     """创建或更新记录"""
     if record_id:
-        # 更新
         resp = api_request("PUT", f"/bitable/v1/apps/{BASE_TOKEN}/tables/{HUIZONG_TABLE}/records/{record_id}", {
             "fields": fields
         })
     else:
-        # 新建
         resp = api_request("POST", f"/bitable/v1/apps/{BASE_TOKEN}/tables/{HUIZONG_TABLE}/records", {
             "fields": fields
         })
@@ -180,18 +192,31 @@ def aggregate(records):
         amt = Decimal(str(qty)) * Decimal(str(price))
         amt = amt.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
 
-        date_raw = f.get("日期", 0)
-        date_ts = safe_float(date_raw)
-        if isinstance(date_raw, str) and len(date_raw) == 19:
-            try:
-                date_ts = datetime.strptime(date_raw, "%Y-%m-%d %H:%M:%S").timestamp()
-            except:
-                pass
+        # 获取日期 - 优先使用日期字段，否则用当前时间
+        date_raw = f.get("日期", "")
+        date_ts = 0
+        if date_raw:
+            if isinstance(date_raw, str):
+                # 尝试解析日期字符串
+                try:
+                    if len(date_raw) >= 10:
+                        dt = datetime.strptime(date_raw[:10], "%Y-%m-%d")
+                        date_ts = dt.timestamp()
+                except:
+                    pass
+            elif isinstance(date_raw, (int, float)):
+                # 已经是时间戳（毫秒）
+                date_ts = date_raw / 1000 if date_raw > 1000000000000 else date_raw
+        
+        # 如果没有日期，使用当前时间
+        if date_ts == 0:
+            date_ts = time.time()
 
         key = f"{ym}|{project}|{supplier_id}|{food}"
         g = groups[key]
         g["qty"] += qty
         g["amt"] += amt
+        # 保留最新的日期
         if date_ts > g["date_ts"]:
             g["date_ts"] = date_ts
         if price > 0:
@@ -223,52 +248,14 @@ def aggregate(records):
     return result
 
 
-def build_existing(records):
-    """构建汇总表 key → {record_id, data}"""
-    existing = {}
-    for rec in records:
-        f = rec["fields"]
-        ym = extract_text(f.get("年-月", ""))
-        project = extract_text(f.get("项目名称", ""))
-        supplier_id = get_supplier_id(f)
-        if not supplier_id:
-            continue
-        food = extract_text(f.get("统一食材名称", ""))
-        key = f"{ym}|{project}|{supplier_id}|{food}"
-
-        if key in existing:
-            continue
-
-        existing[key] = {
-            "record_id": rec["record_id"],
-            "data": {
-                "qty": safe_float(f.get("数量汇总", 0)),
-                "amt": safe_float(f.get("金额汇总", 0)),
-                "avg": safe_float(f.get("月均单价", 0)),
-                "max": safe_float(f.get("本月最高单价", 0)),
-                "min": safe_float(f.get("本月最低单价", 0)),
-            }
-        }
-    return existing
-
-
-def data_changed(old, new):
-    """检查数据是否有变化"""
-    for k in ["qty", "amt", "avg", "max", "min"]:
-        if abs(old.get(k, 0) - new.get(k, 0)) > 0.01:
-            return True
-    return False
-
-
 def main():
-    print(f"===== 青菜汇总v10 {time.strftime('%Y-%m-%d %H:%M:%S')} =====")
+    print(f"===== 青菜汇总v11 {time.strftime('%Y-%m-%d %H:%M:%S')} =====")
     print(f"App ID: {LARK_APP_ID[:20]}..." if LARK_APP_ID else "App ID: 未设置")
-    print(f"Token: {LARK_TOKEN[:20]}..." if LARK_TOKEN else "Token: 未设置")
 
     # 1. 读取台账
     print("\n[1] 读取台账...")
     all_records = []
-    for i, tid in enumerate(TAIZHANG_TABLES):
+    for i, tid in enumerate(TAIZHONG_TABLES):
         recs = list_records(tid)
         print(f"  表{i+1}: {len(recs)} 条")
         all_records.extend(recs)
@@ -282,49 +269,40 @@ def main():
     agg = aggregate(all_records)
     print(f"  维度数: {len(agg)}")
 
-    # 3. 读取汇总表
-    print("\n[3] 读取汇总表...")
-    hz_records = list_records(HUIZONG_TABLE)
-    existing = build_existing(hz_records)
-    print(f"  现有: {len(existing)} 条")
+    # 3. 清空汇总表
+    print("\n[3] 清空汇总表...")
+    clear_all_records()
 
-    # 4. 写入
-    print("\n[4] 写入...")
-    added = updated = unchanged = errors = 0
+    # 4. 写入新数据
+    print("\n[4] 写入新数据...")
+    added = errors = 0
 
     for item in agg:
-        key = item["key"]
+        # 将时间戳转换为日期字符串 (YYYY-MM-DD)
+        date_str = datetime.fromtimestamp(item["date_ts"]).strftime("%Y-%m-%d")
+        
         new_fields = {
+            "年-月": item["ym"],
+            "日期": date_str,
+            "项目名称": item["project"],
+            "供应商名称": [item["supplier_id"]],
+            "统一食材名称": item["food"],
             "数量汇总": item["qty"],
             "金额汇总": item["amt"],
             "月均单价": item["avg"],
             "本月最高单价": item["max"],
             "本月最低单价": item["min"]
         }
-        if key in existing:
-            ex = existing[key]
-            if not data_changed(ex["data"], new_fields):
-                unchanged += 1
-                continue
-            if upsert_record(ex["record_id"], new_fields):
-                updated += 1
-            else:
-                errors += 1
-                print(f"  更新失败: {key[:50]}")
+        
+        if upsert_record(None, new_fields):
+            added += 1
         else:
-            new_fields["项目名称"] = item["project"]
-            # 关联字段格式: 直接传 record_id 字符串数组
-            new_fields["供应商名称"] = [item["supplier_id"]]
-            new_fields["统一食材名称"] = item["food"]
-            if upsert_record(None, new_fields):
-                added += 1
-            else:
-                errors += 1
-                print(f"  新增失败: {key[:50]}")
-        time.sleep(0.2)
+            errors += 1
+            print(f"  新增失败: {item['key'][:50]}")
+        time.sleep(0.15)
 
     print(f"\n===== 完成 =====")
-    print(f"新增:{added} 更新:{updated} 未变:{unchanged} 失败:{errors}")
+    print(f"新增:{added} 失败:{errors}")
 
 
 if __name__ == "__main__":
