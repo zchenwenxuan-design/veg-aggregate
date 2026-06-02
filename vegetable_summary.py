@@ -278,12 +278,12 @@ def main():
     added = errors = 0
 
     for item in agg:
-        # 将时间戳转换为日期字符串 (YYYY-MM-DD)
-        date_str = datetime.fromtimestamp(item["date_ts"]).strftime("%Y-%m-%d")
+        # 飞书 API 日期字段需要毫秒时间戳
+        date_ms = int(item["date_ts"] * 1000)
         
         new_fields = {
             "年-月": item["ym"],
-            "日期": date_str,
+            "日期": date_ms,
             "项目名称": item["project"],
             "供应商名称": [item["supplier_id"]],
             "统一食材名称": item["food"],
