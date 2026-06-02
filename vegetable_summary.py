@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-青菜数据每日汇总脚本 v12 - 正确处理选项字段
+青菜数据每日汇总脚本 v13 - 修复Lookup字段选项映射
 """
 
 import json
@@ -16,6 +16,9 @@ from decimal import Decimal, ROUND_HALF_UP
 BASE_TOKEN = os.environ.get("BASE_TOKEN", "CWRUbNJLZa5BmSsuWx1cvcoFnsd")
 HUIZONG_TABLE = "tblqfaH5oJ5pT4kj"
 TAIZHANG_TABLES = ["tbl4aO9rKwKxlXzR"]
+
+# Lookup目标表（统一食材名称的选项来源）
+LOOKUP_TARGET_TABLES = ["tblmFgpK8ZrMNX0H"]  # 食材名称统一表
 
 # 飞书 API
 LARK_APP_ID = os.environ.get("LARKSUITE_CLI_APP_ID", "")
@@ -301,12 +304,19 @@ def aggregate(records):
 
 
 def main():
-    print(f"===== 青菜汇总v12 {time.strftime('%Y-%m-%d %H:%M:%S')} =====")
+    print(f"===== 青菜汇总v13 {time.strftime('%Y-%m-%d %H:%M:%S')} =====")
 
     # 0. 加载选项映射
     print("\n[0] 加载字段选项映射...")
+    # 加载台账表的选项（项目名称等）
     for tid in TAIZHANG_TABLES:
+        print(f"  加载台账表选项: {tid}")
         load_field_options(tid)
+    # 加载Lookup目标表的选项（统一食材名称）
+    for tid in LOOKUP_TARGET_TABLES:
+        print(f"  加载Lookup目标表选项: {tid}")
+        load_field_options(tid)
+    print(f"  总选项映射数: {len(OPTION_MAP)}")
 
     # 1. 读取台账
     print("\n[1] 读取台账...")
